@@ -1,5 +1,6 @@
 import csv
 import os
+import pandas as pd
 from collections import Counter
 from typing import Dict, List, Tuple
 
@@ -154,13 +155,47 @@ def evaluate_predictions_rdd(predictions_rdd, total_count: int) -> None:
     print(f"Accuracy: {accuracy:.4f} ({correct}/{total_count})")
 
     classes = ["Low", "Medium", "High"]
-    confusion = predictions_rdd.map(lambda ap: ((ap[0], ap[1]), 1)).reduceByKey(lambda a, b: a + b).collectAsMap()
 
-    print("Confusion matrix:")
+    confusion = predictions_rdd.map(
+        lambda ap: ((ap[0], ap[1]), 1)
+    ).reduceByKey(lambda a, b: a + b).collectAsMap()
+
+    print("\nConfusion Matrix:")
     print("\t" + "\t".join(classes))
+
     for actual in classes:
-        row = "\t".join(str(confusion.get((actual, predicted), 0)) for predicted in classes)
+        row = "\t".join(
+            str(confusion.get((actual, predicted), 0))
+            for predicted in classes
+        )
         print(f"{actual}\t{row}")
+
+    classification_metrics(confusion, classes)
+
+
+def classification_metrics(confusion, classes):
+    print("\nClassification Report:")
+    print("Class\tPrecision\tRecall\t\tF1-Score")
+
+    for cls in classes:
+        tp = confusion.get((cls, cls), 0)
+
+        fp = sum(confusion.get((other, cls), 0)
+                 for other in classes if other != cls)
+
+        fn = sum(confusion.get((cls, other), 0)
+                 for other in classes if other != cls)
+
+        precision = tp / (tp + fp) if (tp + fp) else 0
+        recall = tp / (tp + fn) if (tp + fn) else 0
+
+        f1 = (
+            2 * precision * recall / (precision + recall)
+            if (precision + recall)
+            else 0
+        )
+
+        print(f"{cls}\t{precision:.4f}\t\t{recall:.4f}\t\t{f1:.4f}")
 
 
 def plot_cleaned_summary(scores: List[float], actual_distribution: Dict[str, int], cut1: float, cut2: float) -> None:
@@ -189,6 +224,60 @@ def plot_cleaned_summary(scores: List[float], actual_distribution: Dict[str, int
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.show()
     plt.close(fig)
+
+    fig2, ax = plt.subplots(figsize=(6, 6))
+
+    ax.pie(
+    distribution,
+    labels=labels,
+    autopct='%1.1f%%',
+    startangle=90
+    )
+
+    ax.set_title("Risk Level Percentage Distribution")
+
+    plt.show()
+    plt.close(fig2)
+
+
+def plot_feature_weights():
+    if not HAS_MATPLOTLIB:
+        return
+
+    features = list(WEIGHTS.keys())
+    weights = list(WEIGHTS.values())
+
+    plt.figure(figsize=(10, 5))
+    plt.bar(features, weights)
+
+    plt.xticks(rotation=45)
+    plt.ylabel("Weight")
+    plt.title("Feature Importance in Risk Scoring")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_correlation_heatmap():
+    if not HAS_MATPLOTLIB:
+        return
+
+    df = pd.read_csv(OUTPUT_PATH)
+
+    corr = df[NUMERIC_FEATURES].corr()
+
+    plt.figure(figsize=(10, 8))
+    plt.imshow(corr, cmap='coolwarm', interpolation='nearest')
+
+    plt.colorbar()
+
+    plt.xticks(range(len(NUMERIC_FEATURES)), NUMERIC_FEATURES, rotation=45)
+    plt.yticks(range(len(NUMERIC_FEATURES)), NUMERIC_FEATURES)
+
+    plt.title("Feature Correlation Heatmap")
+
+    plt.tight_layout()
+    plt.show()
 
 
 def main() -> None:
@@ -227,6 +316,8 @@ def main() -> None:
 
         plot_cleaned_summary(sampled_scores, actual_distribution, cut1, cut2)
         evaluate_predictions_rdd(predictions_rdd, cleaned_count)
+        plot_feature_weights()
+        plot_correlation_heatmap()
 
         print("\nThis notebook now uses a Spark RDD pipeline for data loading and cleaning.")
         print("The classifier remains a lightweight rule-based scoring model.")
@@ -236,3 +327,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
